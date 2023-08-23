@@ -1,0 +1,87 @@
+name: Apk
+
+on:
+  push:
+    branches:
+      - "*"
+      - "!main"
+  create:
+    tags:
+      - "v*" # Push events to matching v*, i.e. v1.0, v20.15.10
+
+  # Allows you to run this workflow manually from the Actions tab
+  workflow_dispatch:
+    
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+    
+    # Checkout the repository
+    - uses: actions/checkout@v3
+    - uses: actions/setup-java@v2
+      with:
+        distribution: 'zulu'
+        java-version: '11'
+    
+    # Install flutter
+    - uses: subosito/flutter-action@v2
+      with:
+        # flutter-version: '3.14.0'
+        channel: 'stable' # 'dev', 'alpha', 'beta', 'master' default to: 'stable'
+    
+    # Prepare flutter dependencies and check
+    - name: Prepare flutter dependencies and check
+      run: make prepare-check
+
+    # Decoding android/key.properties. if tag is available or commit message contains "release"
+    - name: Decoding android/key.properties
+      if: startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, 'build-apk')
+      run: |
+        echo "${{ secrets.KEYPROP_PROD }}" | base64 --decode > android/key.properties
+        echo "${{ secrets.KEYJKS_PROD }}" | base64 --decode > android/app/key.jks
+    
+    # Build android release
+    - name: Build android release
+      if: startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, 'build-apk')
+      run: flutter build apk --release --split-per-abi
+
+    # Upload APK files
+    - uses: actions/upload-artifact@v3
+      if: startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, 'build-apk')
+      name: Upload APK files
+      with:
+        name: app.apk.zip
+        path: build/app/outputs/flutter-apk/app-arm*.apk
+        retention-days: 1
+
+    # Send slack notification
+    - name: Send slack notification
+      uses: 8398a7/action-slack@v3
+      with:
+        status: ${{ job.status }}
+        fields: repo,message,commit,action,eventName,workflow,job,took # selectable (default: repo,message)
+        if_mention: 'failure,cancelled'
+        mention: 'Omer'
+        icon_url': 'https://img.icons8.com/emoji/96/000000/penguin--v2.png'
+        author_name: 10 Million Faces # default: 8398a7@action-slack
+      env:
+        SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK }} # required
+      if: always() # Pick up events even if the job fails or is canceled.
+
+    # Upload APKs to slack
+    - name: Upload APKs to slack
+      if: startsWith(github.ref, 'refs/tags/') || contains(github.event.head_commit.message, 'build-apk')
+      run: |
+        version=$(grep "version: " pubspec.yaml | sed 's/version: //')
+        token=${{ secrets.SLACK_TOKEN }}
+
+        cp build/app/outputs/flutter-apk/app-arm64-v8a-release.apk build/app-arm64-v8a-release-$version.apk
+        cp build/app/outputs/flutter-apk/app-armeabi-v7a-release.apk build/app-armeabi-v7a-release-$version.apk
+        # cp build/app/outputs/flutter-apk/app-x86_64-release.apk build/app-x86_64-release-$version.apk
+        ls -la build/
+
+        ./upload.sh --token=$token --channel=releases --title="app-arm64-v8a-release-$version.apk" --path=build/app-arm64-v8a-release-$version.apk
+        ./upload.sh --token=$token --channel=releases --title="app-armeabi-v7a-release-$version.apk" --path=build/app-armeabi-v7a-release-$version.apk
+        # ./upload.sh --token=$token --channel=releases --title="app-x86_64-release-$version.apk" --path=build/app-x86_64-release-$version.apk
+
