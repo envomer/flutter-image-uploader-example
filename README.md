@@ -1,4 +1,4 @@
-# farbwaehler_app
+# farbwaehle
 
 A new Flutter project.
 
