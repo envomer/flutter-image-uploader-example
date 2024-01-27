@@ -1,6 +1,6 @@
 # farbwaeh
 
-A new Flutter project.
+test project
 
 ## Getting Started
 
